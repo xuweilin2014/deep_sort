@@ -161,7 +161,7 @@ class NearestNeighborDistanceMetric(object):
             A list of targets that are currently present in the scene.
 
         """
-        # feature 是一个 NxM 的矩阵，表示有 N 个维度为 M 的 feature 向量
+        # feature 是一个 NxM 的矩阵，表示有 N 个维度为 M 列的 feature 向量
         for feature, target in zip(features, targets):
             self.samples.setdefault(target, []).append(feature)
             # 如果 budget 不为空，那么只取每个 track 的最新的 budget 个向量
