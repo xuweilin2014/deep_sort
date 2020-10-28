@@ -163,6 +163,7 @@ class NearestNeighborDistanceMetric(object):
         """
         # feature 是一个 NxM 的矩阵，表示有 N 个维度为 M 列的 feature 向量
         for feature, target in zip(features, targets):
+            # Python 字典 setdefault() 函数和 get() 方法 类似, 如果键不存在于字典中，将会添加键并将值设为默认值
             self.samples.setdefault(target, []).append(feature)
             # 如果 budget 不为空，那么只取每个 track 的最新的 budget 个向量
             if self.budget is not None:
