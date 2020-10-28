@@ -19,6 +19,11 @@ def _pdist(a, b):
         contains the squared distance between `a[i]` and `b[j]`.
 
     """
+    # 用于计算成对的平方距离
+    # a NxM 代表 N 个对象，每个对象有 M 个数值作为 embedding 进行比较
+    # b LxM 代表 L 个对象，每个对象有 M 个数值作为 embedding 进行比较
+    # 返回的是 NxL 的矩阵，比如 dist[i][j] 代表 a[i] 和 b[j] 之间的平方和距离
+    # 实现见：https://blog.csdn.net/frankzd/article/details/80251042
     a, b = np.asarray(a), np.asarray(b)
     if len(a) == 0 or len(b) == 0:
         return np.zeros((len(a), len(b)))
@@ -48,8 +53,14 @@ def _cosine_distance(a, b, data_is_normalized=False):
         contains the squared distance between `a[i]` and `b[j]`.
 
     """
+    # a 和 b 之间的余弦距离
+    # a : [NxM] b : [LxM]
+    # 余弦距离 = 1 - 余弦相似度
+    # https://blog.csdn.net/u013749540/article/details/51813922
     if not data_is_normalized:
+        # 需要将余弦相似度转化成类似欧氏距离的余弦距离。
         a = np.asarray(a) / np.linalg.norm(a, axis=1, keepdims=True)
+        #  np.linalg.norm 操作是求向量的范式，默认是L2范式，等同于求向量的欧式距离
         b = np.asarray(b) / np.linalg.norm(b, axis=1, keepdims=True)
     return 1. - np.dot(a, b.T)
 
@@ -95,7 +106,7 @@ def _nn_cosine_distance(x, y):
     distances = _cosine_distance(x, y)
     return distances.min(axis=0)
 
-
+# 对于每一个目标，返回一个最近距离
 class NearestNeighborDistanceMetric(object):
     """
     A nearest neighbor distance metric that, for each target, returns
@@ -121,17 +132,20 @@ class NearestNeighborDistanceMetric(object):
     """
 
     def __init__(self, metric, matching_threshold, budget=None):
-
-
+        # 默认 matching_threshold = 0.2，budge = 100
         if metric == "euclidean":
+            # 使用最近邻欧式距离
             self._metric = _nn_euclidean_distance
         elif metric == "cosine":
+            # 使用最近邻的余弦距离
             self._metric = _nn_cosine_distance
         else:
-            raise ValueError(
-                "Invalid metric; must be either 'euclidean' or 'cosine'")
+            raise ValueError("Invalid metric; must be either 'euclidean' or 'cosine'")
+        # 默认为 0.2
         self.matching_threshold = matching_threshold
+        # 默认为 100
         self.budget = budget
+        # samples是一个字典{id->feature list}
         self.samples = {}
 
     def partial_fit(self, features, targets, active_targets):
@@ -147,10 +161,14 @@ class NearestNeighborDistanceMetric(object):
             A list of targets that are currently present in the scene.
 
         """
+        # feature 是一个 NxM 的矩阵，表示有 N 个维度为 M 的 feature 向量
         for feature, target in zip(features, targets):
             self.samples.setdefault(target, []).append(feature)
+            # 如果 budget 不为空，那么只取每个 track 的最新的 budget 个向量
             if self.budget is not None:
                 self.samples[target] = self.samples[target][-self.budget:]
+
+        # 只保留 samples 中处于 confirmed 状态的 track 的 feature 向量
         self.samples = {k: self.samples[k] for k in active_targets}
 
     def distance(self, features, targets):

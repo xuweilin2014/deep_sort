@@ -62,21 +62,35 @@ class Track:
         vector is added to this list.
 
     """
-
+    # Tentative: 不确定态，这种状态会在初始化一个 Track 的时候分配，并且只有在连续匹配上 n_init 帧才会转变为确定态。如果在处于不确定态的情况下没有匹配上任何 detection，那将转变为删除态。
+    # Confirmed: 确定态，代表该 Track 确实处于匹配状态。如果当前 Track 属于确定态，但是失配连续达到 max_age 次数的时候，就会被转变为删除态。
+    # Deleted: 删除态，说明该 Track 已经失效。
     def __init__(self, mean, covariance, track_id, n_init, max_age,
                  feature=None):
         self.mean = mean
         self.covariance = covariance
         self.track_id = track_id
+
+        # hits 是在每次 update 的时候加 1，也就是说只有在 track 和某个 detection 匹配上的时候才会加一
+        # hits 代表了一共匹配上了多少次，当 hits > n_init 的时候，就会将 track 设置为 confirmed 状态
         self.hits = 1
         self.age = 1
+
+        # time_since_update 在调用 predict 的时候会加 1，而每次调用 update 的时候（也就是匹配上的时候）置为 0，也就是说 time_since_update 表示失配多少次
+        # 当 time_since_update 大于 max_age 的时候就会将 track 的状态设置为 deleted 状态
         self.time_since_update = 0
 
         self.state = TrackState.Tentative
+
+        # features 列表，存储该轨迹在不同帧对应位置通过 ReID 提取到的特征
         self.features = []
+
+        # 每个 track 都对应多个 feature，每次更新都将最新的 feature 添加到列表中
         if feature is not None:
             self.features.append(feature)
 
+        # 一个新创建的 track 连续 n_init 帧匹配上 detection 之后才会从 unconfirmed 状态转变为 confirmed 状态
+        # 如果前 n_init 帧中有一帧没有匹配上任何 detection，那么就会被标记为 deleted 状态
         self._n_init = n_init
         self._max_age = max_age
 

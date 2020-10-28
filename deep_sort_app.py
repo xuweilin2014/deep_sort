@@ -54,8 +54,7 @@ def gather_sequence_info(sequence_dir, detection_file):
         groundtruth = np.loadtxt(groundtruth_file, delimiter=',')
 
     if len(image_filenames) > 0:
-        image = cv2.imread(next(iter(image_filenames.values())),
-                           cv2.IMREAD_GRAYSCALE)
+        image = cv2.imread(next(iter(image_filenames.values())), cv2.IMREAD_GRAYSCALE)
         image_size = image.shape
     else:
         image_size = None
@@ -157,9 +156,11 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
         If True, show visualization of intermediate tracking results.
 
     """
+    # 收集流的信息，包括图片名称，检测结果以及置信度
     seq_info = gather_sequence_info(sequence_dir, detection_file)
-    metric = nn_matching.NearestNeighborDistanceMetric(
-        "cosine", max_cosine_distance, nn_budget)
+    # metric 实例化 nn_matching 的 NearestNeighborDistanceMetric 类，输入的初始距离度量函数是 cosine，此时可以传入 euclidean
+    metric = nn_matching.NearestNeighborDistanceMetric("cosine", max_cosine_distance, nn_budget)
+    # 创建一个追踪器对象
     tracker = Tracker(metric)
     results = []
 
@@ -167,15 +168,14 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
         print("Processing frame %05d" % frame_idx)
 
         # Load image and generate detections.
-        detections = create_detections(
-            seq_info["detections"], frame_idx, min_detection_height)
+        # 根据之前的参数生成检测框，并且只保留置信度 confidence 大于 min_confidence 的检测框
+        detections = create_detections(seq_info["detections"], frame_idx, min_detection_height)
         detections = [d for d in detections if d.confidence >= min_confidence]
 
         # Run non-maxima suppression.
         boxes = np.array([d.tlwh for d in detections])
         scores = np.array([d.confidence for d in detections])
-        indices = preprocessing.non_max_suppression(
-            boxes, nms_max_overlap, scores)
+        indices = preprocessing.non_max_suppression(boxes, nms_max_overlap, scores)
         detections = [detections[i] for i in indices]
 
         # Update tracker.
@@ -184,8 +184,7 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
 
         # Update visualization.
         if display:
-            image = cv2.imread(
-                seq_info["image_filenames"][frame_idx], cv2.IMREAD_COLOR)
+            image = cv2.imread(seq_info["image_filenames"][frame_idx], cv2.IMREAD_COLOR)
             vis.set_image(image.copy())
             vis.draw_detections(detections)
             vis.draw_trackers(tracker.tracks)
@@ -195,8 +194,7 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
             if not track.is_confirmed() or track.time_since_update > 1:
                 continue
             bbox = track.to_tlwh()
-            results.append([
-                frame_idx, track.track_id, bbox[0], bbox[1], bbox[2], bbox[3]])
+            results.append([frame_idx, track.track_id, bbox[0], bbox[1], bbox[2], bbox[3]])
 
     # Run tracker.
     if display:

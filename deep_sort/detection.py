@@ -1,7 +1,7 @@
 # vim: expandtab:ts=4:sw=4
 import numpy as np
 
-
+# Detection 用于保存通过目标检测器得到的一个检测框
 class Detection(object):
     """
     This class represents a bounding box detection in a single image.
@@ -26,6 +26,7 @@ class Detection(object):
 
     """
 
+    # 包含 3 个属性：top left 坐标 + 框的宽和高、该 bbox 的置信度、通过 reid 获得的 embedding
     def __init__(self, tlwh, confidence, feature):
         self.tlwh = np.asarray(tlwh, dtype=np.float)
         self.confidence = float(confidence)
