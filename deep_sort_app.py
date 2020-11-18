@@ -15,16 +15,15 @@ from deep_sort.tracker import Tracker
 
 
 def gather_sequence_info(sequence_dir, detection_file):
-    """Gather sequence information, such as image filenames, detections,
+    """
+    Gather sequence information, such as image filenames, detections,
     groundtruth (if available).
-
     Parameters
     ----------
     sequence_dir : str
         Path to the MOTChallenge sequence directory.
     detection_file : str
         Path to the detection file.
-
     Returns
     -------
     Dict
@@ -38,8 +37,8 @@ def gather_sequence_info(sequence_dir, detection_file):
         * image_size: Image size (height, width).
         * min_frame_idx: Index of the first frame.
         * max_frame_idx: Index of the last frame.
-
     """
+
     image_dir = os.path.join(sequence_dir, "img1")
     image_filenames = {
         int(os.path.splitext(f)[0]): os.path.join(image_dir, f)
@@ -93,8 +92,8 @@ def gather_sequence_info(sequence_dir, detection_file):
 
 
 def create_detections(detection_mat, frame_idx, min_height=0):
-    """Create detections for given frame index from the raw detection matrix.
-
+    """
+    Create detections for given frame index from the raw detection matrix.
     Parameters
     ----------
     detection_mat : ndarray
@@ -106,13 +105,12 @@ def create_detections(detection_mat, frame_idx, min_height=0):
     min_height : Optional[int]
         A minimum detection bounding box height. Detections that are smaller
         than this value are disregarded.
-
     Returns
     -------
     List[tracker.Detection]
         Returns detection responses at given frame index.
-
     """
+
     frame_indices = detection_mat[:, 0].astype(np.int)
     mask = frame_indices == frame_idx
 
@@ -125,11 +123,30 @@ def create_detections(detection_mat, frame_idx, min_height=0):
     return detection_list
 
 
-def run(sequence_dir, detection_file, output_file, min_confidence,
-        nms_max_overlap, min_detection_height, max_cosine_distance,
-        nn_budget, display):
-    """Run multi-target tracker on a particular sequence.
+'''
+deep-sort 的处理流程如下：
+1.根据检测器（比如 yolov3）获取到当前帧的检测结果信息
+2.对检测框进行筛选，只保留检测框的 confidence 大于 min_confidence 的检测框
+3.调用 Tracker#predict 方法，依据已经得到的 track，对当前帧进行跟踪结果进行预测，预测完之后，需要对每一个 tracker 的 time_since_update 加一
+4.调用 Tracker#update 方法，对 track 进行更新，更新的具体步骤如下：
+    1).将已经存在的 tracker 分为 confirmed tracks 和 unconfirmed tracks
+    2).对于 confirmed tracks，将它们与当前的帧的检测结果 detections 进行级联匹配，这个匹配操作需要从刚刚匹配成功的 track （也就是 time_since_update = 1 的 track）
+    循环遍历到最多已经有 max_age 次没有匹配到的 track（time_since_update = max_age 的 track），这样做的目的是为了对更加频繁出现的目标赋予优先权，级联匹配的具体步骤如下：
+        i.计算当前帧中的每一个 detection 的 feature 到这一层中（time_since_update = level）的每一个 track 保存的 feature 特征集之间的余弦距离矩阵，注意是取
+        最小值作为该 track 与检测结果 detection 之间的计算值
+        ii.在 cost_matrix 中，进行运行信息约束，对于每一个 track 计算其预测结果和真实的检测结果 detection 之间的马氏距离，并且将 cost_matrix 中，相应的 track 的
+        马氏距离大于阈值（gating_threshold）的值置为无穷大
+        iii.将经过上述两个步骤处理过的 cost_matrix 作为匈牙利算法的输入，得到线性匹配的结果，并且去除差距较大的匹配对
+    3).unconfirmed tracks 和 2) 中没有匹配的 tracker（unmatched_tracks_a）一起组成 iou_track_candidates，与还没有匹配上的检测结果 unmatcher_detections 进行
+    IOU 匹配。缓解因为表观突变或者说部分遮挡导致的较大变化
+    4).合并 2) 和 3) 的结果，得到最终的匹配结果
+'''
 
+
+def run(sequence_dir, detection_file, output_file, min_confidence, nms_max_overlap, min_detection_height, max_cosine_distance,
+        nn_budget, display):
+    """
+    Run multi-target tracker on a particular sequence.
     Parameters
     ----------
     sequence_dir : str
@@ -154,8 +171,8 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
         is enforced.
     display : bool
         If True, show visualization of intermediate tracking results.
-
     """
+
     # 收集流的信息，包括图片名称，检测结果以及置信度
     seq_info = gather_sequence_info(sequence_dir, detection_file)
     # metric 实例化 nn_matching 的 NearestNeighborDistanceMetric 类，输入的初始距离度量函数是 cosine，此时可以传入 euclidean
@@ -172,7 +189,7 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
         detections = create_detections(seq_info["detections"], frame_idx, min_detection_height)
         detections = [d for d in detections if d.confidence >= min_confidence]
 
-        # Run non-maxima suppression.
+        # Run non-maximal suppression.
         boxes = np.array([d.tlwh for d in detections])
         scores = np.array([d.confidence for d in detections])
         indices = preprocessing.non_max_suppression(boxes, nms_max_overlap, scores)
@@ -207,14 +224,15 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
     f = open(output_file, 'w')
     for row in results:
         print('%d,%d,%.2f,%.2f,%.2f,%.2f,1,-1,-1,-1' % (
-            row[0], row[1], row[2], row[3], row[4], row[5]),file=f)
+            row[0], row[1], row[2], row[3], row[4], row[5]), file=f)
 
 
 def bool_string(input_string):
-    if input_string not in {"True","False"}:
+    if input_string not in {"True", "False"}:
         raise ValueError("Please Enter a valid Ture/False choice")
     else:
         return (input_string == "True")
+
 
 def parse_args():
     """ Parse command line arguments.
@@ -228,25 +246,25 @@ def parse_args():
         required=True)
     parser.add_argument(
         "--output_file", help="Path to the tracking output file. This file will"
-        " contain the tracking results on completion.",
+                              " contain the tracking results on completion.",
         default="/tmp/hypotheses.txt")
     parser.add_argument(
         "--min_confidence", help="Detection confidence threshold. Disregard "
-        "all detections that have a confidence lower than this value.",
+                                 "all detections that have a confidence lower than this value.",
         default=0.8, type=float)
     parser.add_argument(
         "--min_detection_height", help="Threshold on the detection bounding "
-        "box height. Detections with height smaller than this value are "
-        "disregarded", default=0, type=int)
+                                       "box height. Detections with height smaller than this value are "
+                                       "disregarded", default=0, type=int)
     parser.add_argument(
-        "--nms_max_overlap",  help="Non-maxima suppression threshold: Maximum "
-        "detection overlap.", default=1.0, type=float)
+        "--nms_max_overlap", help="Non-maxima suppression threshold: Maximum "
+                                  "detection overlap.", default=1.0, type=float)
     parser.add_argument(
         "--max_cosine_distance", help="Gating threshold for cosine distance "
-        "metric (object appearance).", type=float, default=0.2)
+                                      "metric (object appearance).", type=float, default=0.2)
     parser.add_argument(
         "--nn_budget", help="Maximum size of the appearance descriptors "
-        "gallery. If None, no budget is enforced.", type=int, default=None)
+                            "gallery. If None, no budget is enforced.", type=int, default=None)
     parser.add_argument(
         "--display", help="Show intermediate tracking results",
         default=True, type=bool_string)

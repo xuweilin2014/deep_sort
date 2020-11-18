@@ -50,23 +50,35 @@ def min_cost_matching(distance_metric, max_distance, tracks, detections, track_i
     if len(detection_indices) == 0 or len(track_indices) == 0:
         return [], track_indices, detection_indices  # Nothing to match.
 
+    # 1.iou 匹配
+    # distance_metric 方法返回一个 cost_matrix，这个 cost_matrix 的大小为 N*M，其中 N 是 len(track_indices)，也就是 len(unmatched_tracks)
+    # M 是指 len(detection_indices)，也就是 len(unmatched_detections)。cost_matrix[i][j] 也就是第 i 个 track 的目标框和第 j 个 detection 的目标框的
+    # 1 - iou(track[i],detection[j])，也就是 cost_matrix[i][j] 的值越大，说明 track[i] 和 detection[j] 之间的 iou 越小，不大可能匹配
+    #
+    # 2.外观特征匹配和运动信息匹配（gated_metric)
+    # 先用外观特征计算出一个 cost_matrix，这个 cost_matrix 表示每个 track 和 detection 的 feature 之间的余弦距离，
+    # 再使用马氏距离对这个 cost_matrix 进行门限控制，最后返回
     cost_matrix = distance_metric(tracks, detections, track_indices, detection_indices)
+
+    # 把 cost_matrix 中大于阈值 max_distance （默认为 0.7）的值设置为 0.70001
     cost_matrix[cost_matrix > max_distance] = max_distance + 1e-5
 
-    # 使用匈牙利算法
+    # 使用匈牙利算法，得到一个 N * 2 的结果，也就是 N 个匹配的 (track, detection）
     indices = linear_assignment(cost_matrix)
 
     matches, unmatched_tracks, unmatched_detections = [], [], []
 
-    # 这几个 for 循环用于对匹配的结果进行筛选，得到匹配和未匹配的结果
+    # 获取到经过匈牙利算法还是没有匹配的 detection 的索引
     for col, detection_idx in enumerate(detection_indices):
         if col not in indices[:, 1]:
             unmatched_detections.append(detection_idx)
 
+    # 获取到经过匈牙利算法还是没有匹配到的 track 的索引
     for row, track_idx in enumerate(track_indices):
         if row not in indices[:, 0]:
             unmatched_tracks.append(track_idx)
 
+    # 注意，对于已经在 indices 中的 track 和 detection，如果它们在 cost_matrix 中的值大于阈值 max_distance，那么此 track 和此 detection 也认为是不匹配的
     for row, col in indices:
         track_idx = track_indices[row]
         detection_idx = detection_indices[col]
@@ -82,7 +94,6 @@ def min_cost_matching(distance_metric, max_distance, tracks, detections, track_i
 def matching_cascade(distance_metric, max_distance, cascade_depth, tracks, detections, track_indices=None, detection_indices=None):
     """
     Run matching cascade.
-
     Parameters
     ----------
     distance_metric : Callable[List[Track], List[Detection], List[int], List[int]) -> ndarray
@@ -132,7 +143,7 @@ def matching_cascade(distance_metric, max_distance, cascade_depth, tracks, detec
         if len(unmatched_detections) == 0:  # No detections left
             break
 
-        # detection 只和 time_since_update == level 的帧进行匹配
+        # detection 只和 time_since_update == level + 1 的帧进行匹配
         track_indices_l = [
             k for k in track_indices
             if tracks[k].time_since_update == 1 + level
@@ -153,7 +164,8 @@ def matching_cascade(distance_metric, max_distance, cascade_depth, tracks, detec
 
 
 def gate_cost_matrix(kf, cost_matrix, tracks, detections, track_indices, detection_indices, gated_cost=INFTY_COST, only_position=False):
-    """Invalidate infeasible entries in cost matrix based on the state distributions obtained by Kalman filtering.
+    """
+    Invalidate infeasible entries in cost matrix based on the state distributions obtained by Kalman filtering.
     Parameters
     ----------
     kf : The Kalman filter.
@@ -178,16 +190,21 @@ def gate_cost_matrix(kf, cost_matrix, tracks, detections, track_indices, detecti
     only_position : Optional[bool]
         If True, only the x, y position of the state distribution is considered
         during gating. Defaults to False.
-
     Returns
     -------
     ndarray
         Returns the modified cost matrix.
-
     """
+
+    # cost_matrix 的大小为 N * M，表示 N 个 track 和 M 个 detection 之间的余弦距离，其中 N = len(track_indices), M = len(detection_indices)
     gating_dim = 2 if only_position else 4
     gating_threshold = kalman_filter.chi2inv95[gating_dim]
+    # 将 detection 的 bounding box 的格式改为（center_x, center_y, aspect ratio, height）
     measurements = np.asarray([detections[i].to_xyah() for i in detection_indices])
+
+    # 对于 track，计算其预测结果和检测结果之间的马氏距离，并且将 cost_matrix 中相应 track 的马氏距离大于阈值（gating threshold）
+    # 的值置为 gated_cost（默认值为 10000），也就是无穷大。
+    # 其实也就是将前面计算出来的代表余弦距离的 cost_matrix 再通过各个 track 和 detection 之间的马氏距离筛选一遍
     for row, track_idx in enumerate(track_indices):
         track = tracks[track_idx]
         gating_distance = kf.gating_distance(track.mean, track.covariance, measurements, only_position)

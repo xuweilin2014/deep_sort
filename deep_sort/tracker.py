@@ -48,10 +48,12 @@ class Tracker:
         # 最大 iou，iou 匹配的时候使用
         self.max_iou_distance = max_iou_distance
 
-        # max_age 直接指定级联匹配的 cascade_depth 参数的值
+        # max_age 直接指定级联匹配的 cascade_depth 参数的值，如果一个处于 confirmed 状态的 track，最多连续 max_age 都没有匹配上  detection，
+        # 那么就会被删除
         self.max_age = max_age
 
-        # n_init 代表需要 n_init 次数的 update 才会将 track 状态设置为confirmed
+        # n_init 代表一个新的轨迹 track 需要连续匹配上 n_init 次数的 detection 才会将 track 状态设置为 confirmed
+        # 如果这最开始的 n_init 帧中只要有一帧没有匹配上，那么就会被设置为 deleted 状态
         self.n_init = n_init
 
         # 卡尔曼滤波器
@@ -86,7 +88,7 @@ class Tracker:
             self.tracks[track_idx].update(self.kf, detections[detection_idx])
 
         # 针对未匹配的 track，调用 mark_missed 进行处理
-        # 若 track 处于未确定状态，则标记为 deleted 状态
+        # 若 track 处于未确定 Tentative 状态，则标记为 deleted 状态
         # 若 track 失配的次数大于 max_age，那么也标记为 deleted 状态
         for track_idx in unmatched_tracks:
             self.tracks[track_idx].mark_missed()
@@ -98,28 +100,34 @@ class Tracker:
         # 得到新的 tracks 列表，保存的是标记为 confirmed 和 tentative 的 track
         self.tracks = [t for t in self.tracks if not t.is_deleted()]
 
+        # active_targets 中保存的是状态为 Confirmed 状态的 track
         active_targets = [t.track_id for t in self.tracks if t.is_confirmed()]
         features, targets = [], []
         for track in self.tracks:
             if not track.is_confirmed():
                 continue
+            # 将已经确认的 track 的 features 属性添加到 features 变量中
             features += track.features
+            # 生成长度为 len(track.features) 的 targets 对象，其中保存的都是 track_id，并且其中的 track_id 和上面的 feature 所属于的 track 是一一对应的
             targets += [track.track_id for _ in track.features]
             track.features = []
 
+        # 在 NearestNeighborDistanceMetric 类中，有一个属性 samples，即一个字典，{id -> feature list}
+        # 将每个 track 的 feature 保存到 samples 属性中，并且只保存状态为 Confirmed 的 track 的最近 budget 个 feature
         self.metric.partial_fit(np.asarray(features), np.asarray(targets), active_targets)
 
     def _match(self, detections):
-        # 主要功能是进行匹配，找到匹配的，未匹配的部分
+        # 主要功能是用于级联匹配
         def gated_metric(tracks, dets, track_indices, detection_indices):
-            # 功能：用于计算 track 和 detection 之间的距离，代价函数需要使用在 KM 算法之前
             features = np.array([dets[i].feature for i in detection_indices])
             targets = np.array([tracks[i].track_id for i in track_indices])
-            # 通过最近邻计算出代价矩阵
+            # cost_matrix 表示 targets 中的每一个 track 到每一个 detection 之间的余弦距离
             cost_matrix = self.metric.distance(features, targets)
-            # 计算马氏距离，得到新的代价矩阵
+            # 计算马氏距离，对上面表示余弦距离的 cost_matrix 进行门限设置，也就是说，如果 track 和 detection 之间的马氏距离大于阈值，那么就将
+            # 对应的 cost_matrix 中的值设定为无穷大
             cost_matrix = linear_assignment.gate_cost_matrix(self.kf, cost_matrix, tracks, dets, track_indices, detection_indices)
 
+            # 返回 cost_matrix 进行匈牙利匹配
             return cost_matrix
 
         # 将轨迹的状态划分为 confirmed_tracks 和 unconfirmed_tracks
@@ -132,8 +140,9 @@ class Tracker:
 
         # 将所有状态为未确定态的轨迹和刚刚没有匹配上的轨迹组合为 iou_track_candidates
         # tracks[k].time_since_update == 1 表示刚刚没有匹配上
+        # 注意，在调用 Tracker#update 方法之前，会调用 Tracker#predict 方法，将每个 track 的 time_since_update 加 1
         iou_track_candidates = unconfirmed_tracks + [k for k in unmatched_tracks_a if self.tracks[k].time_since_update == 1]
-        # tracks[k].time_since_update != 1 表示已经很久没有匹配上
+        # tracks[k].time_since_update != 1 表示已经很久没有匹配上，去除掉上面的 track
         unmatched_tracks_a = [k for k in unmatched_tracks_a if self.tracks[k].time_since_update != 1]
 
         # 进行 IOU 匹配，也就是说对级联匹配中没有匹配上的目标再进行 IOU 匹配
@@ -147,5 +156,6 @@ class Tracker:
 
     def _initiate_track(self, detection):
         mean, covariance = self.kf.initiate(detection.to_xyah())
+        # 在使用检测器得到了一帧图像的检测框之后，会使用 reid 模型从里面提取出特征向量 feature，保存到 deep-sort 中的 Detection 类属性中
         self.tracks.append(Track(mean, covariance, self._next_id, self.n_init, self.max_age, detection.feature))
         self._next_id += 1

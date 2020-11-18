@@ -8,7 +8,6 @@ class TrackState:
     the track state is changed to `confirmed`. Tracks that are no longer alive
     are classified as `deleted` to mark them for removal from the set of active
     tracks.
-
     """
 
     Tentative = 1
@@ -21,7 +20,6 @@ class Track:
     A single target track with state space `(x, y, a, h)` and associated
     velocities, where `(x, y)` is the center of the bounding box, `a` is the
     aspect ratio and `h` is the height.
-
     Parameters
     ----------
     mean : ndarray
@@ -40,7 +38,6 @@ class Track:
     feature : Optional[ndarray]
         Feature vector of the detection this track originates from. If not None,
         this feature is added to the `features` cache.
-
     Attributes
     ----------
     mean : ndarray
@@ -60,13 +57,12 @@ class Track:
     features : List[ndarray]
         A cache of features. On each measurement update, the associated feature
         vector is added to this list.
-
     """
+
     # Tentative: 不确定态，这种状态会在初始化一个 Track 的时候分配，并且只有在连续匹配上 n_init 帧才会转变为确定态。如果在处于不确定态的情况下没有匹配上任何 detection，那将转变为删除态。
     # Confirmed: 确定态，代表该 Track 确实处于匹配状态。如果当前 Track 属于确定态，但是失配连续达到 max_age 次数的时候，就会被转变为删除态。
     # Deleted: 删除态，说明该 Track 已经失效。
-    def __init__(self, mean, covariance, track_id, n_init, max_age,
-                 feature=None):
+    def __init__(self, mean, covariance, track_id, n_init, max_age, feature=None):
         self.mean = mean
         self.covariance = covariance
         self.track_id = track_id
@@ -89,85 +85,92 @@ class Track:
         if feature is not None:
             self.features.append(feature)
 
-        # 一个新创建的 track 连续 n_init 帧匹配上 detection 之后才会从 unconfirmed 状态转变为 confirmed 状态
-        # 如果前 n_init 帧中有一帧没有匹配上任何 detection，那么就会被标记为 deleted 状态
+        # 一个新创建的 track 最开始连续 n_init 帧匹配上 detection 之后才会从 Tentative 状态转变为 Confirmed 状态
+        # 如果最开始 n_init 帧中有任何一帧没有匹配上任何 detection，那么就会被标记为 deleted 状态
         self._n_init = n_init
         self._max_age = max_age
 
     def to_tlwh(self):
-        """Get current position in bounding box format `(top left x, top left y,
+        """
+        Get current position in bounding box format `(top left x, top left y,
         width, height)`.
-
         Returns
         -------
         ndarray
             The bounding box.
-
         """
+
         ret = self.mean[:4].copy()
         ret[2] *= ret[3]
         ret[:2] -= ret[2:] / 2
         return ret
 
     def to_tlbr(self):
-        """Get current position in bounding box format `(min x, miny, max x,
+        """
+        Get current position in bounding box format `(min x, miny, max x,
         max y)`.
-
         Returns
         -------
         ndarray
             The bounding box.
-
         """
+
         ret = self.to_tlwh()
         ret[2:] = ret[:2] + ret[2:]
         return ret
 
     def predict(self, kf):
-        """Propagate the state distribution to the current time step using a
+        """
+        Propagate the state distribution to the current time step using a
         Kalman filter prediction step.
-
         Parameters
         ----------
         kf : kalman_filter.KalmanFilter
             The Kalman filter.
-
         """
+
+        # 根据卡尔曼滤波算法，对当前帧的跟踪结果进行预测，预测完了之后，会对每一个 track 的 time_since_update 加 1
         self.mean, self.covariance = kf.predict(self.mean, self.covariance)
         self.age += 1
         self.time_since_update += 1
 
     def update(self, kf, detection):
-        """Perform Kalman filter measurement update step and update the feature
+        """
+        Perform Kalman filter measurement update step and update the feature
         cache.
-
         Parameters
         ----------
         kf : kalman_filter.KalmanFilter
             The Kalman filter.
         detection : Detection
             The associated detection.
-
         """
-        self.mean, self.covariance = kf.update(
-            self.mean, self.covariance, detection.to_xyah())
-        self.features.append(detection.feature)
+        self.mean, self.covariance = kf.update(self.mean, self.covariance, detection.to_xyah())
 
+        # 将新增的 feature 增加到此 track 的 features 属性中
+        self.features.append(detection.feature)
+        # hits 代表了一共匹配上了多少次，这里也要加一
         self.hits += 1
+        # 此 track 匹配上了一个 detection，将 time_since_update 重置为 0
         self.time_since_update = 0
+        # 一个新创建的 track，当其 hits >= n_init 也就是连续匹配上 n_init 次，那么就将这个 track 的状态修改为 Confirmed 状态
         if self.state == TrackState.Tentative and self.hits >= self._n_init:
             self.state = TrackState.Confirmed
 
     def mark_missed(self):
-        """Mark this track as missed (no association at the current time step).
         """
+        Mark this track as missed (no association at the current time step).
+        """
+        # 若 track 处于未确定 Tentative 状态，则标记为 deleted 状态
         if self.state == TrackState.Tentative:
             self.state = TrackState.Deleted
+        # 若 track 失配的次数大于 max_age，那么也标记为 deleted 状态
         elif self.time_since_update > self._max_age:
             self.state = TrackState.Deleted
 
     def is_tentative(self):
-        """Returns True if this track is tentative (unconfirmed).
+        """
+        Returns True if this track is tentative (unconfirmed).
         """
         return self.state == TrackState.Tentative
 
